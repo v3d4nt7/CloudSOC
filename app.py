@@ -18,6 +18,27 @@ DB_PATH = APP_DIR / "sentineldeck.db"
 
 st.set_page_config(page_title="SentinelDeck", page_icon="🛡️", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    .stApp { background: #08111d; color: #e9f2ff; }
+    [data-testid="stSidebar"] { background: linear-gradient(180deg, #0d1d30 0%, #08111d 100%); border-right: 1px solid #1f3852; }
+    [data-testid="stSidebar"] * { color: #dce9f8; }
+    h1, h2, h3 { color: #f3f8ff !important; letter-spacing: -0.03em; }
+    [data-testid="stMetric"] { background: #0e1b2b; border: 1px solid #203a55; border-radius: 14px; padding: 16px; }
+    [data-testid="stMetricLabel"] { color: #98b1ca; }
+    [data-testid="stMetricValue"] { color: #eaf7ff; }
+    .stButton > button { border-radius: 9px; border: 1px solid #2d567b; background: #123b5c; color: #eff9ff; }
+    .stButton > button:hover { border-color: #4ad2ff; color: #ffffff; background: #155278; }
+    [data-testid="stDataFrame"] { border: 1px solid #203a55; border-radius: 10px; overflow: hidden; }
+    div[data-baseweb="select"] > div, .stTextInput input, .stTextArea textarea { background: #0e1b2b !important; color: #eef7ff !important; border-color: #294865 !important; }
+    .eyebrow { color: #4ad2ff; font-weight: 700; font-size: 0.76rem; letter-spacing: 0.12em; text-transform: uppercase; }
+    .status-live { color: #78efb0; font-weight: 700; font-size: 0.8rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def connection() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -154,6 +175,7 @@ def metric_card(label: str, value: int, delta: str | None = None) -> None:
 with st.sidebar:
     st.title("🛡️ SentinelDeck")
     st.caption("Local-first SOC analyst workspace")
+    st.markdown("<span class='status-live'>● LOCAL SENSOR ONLINE</span>", unsafe_allow_html=True)
     page = st.radio("Workspace", ["Overview", "Ingest logs", "Alert queue", "Incidents", "MITRE coverage", "Reports"])
     st.divider()
     if st.button("Load safe demo activity", use_container_width=True):
@@ -168,8 +190,9 @@ events = query("SELECT * FROM events ORDER BY timestamp DESC")
 alerts = query("SELECT * FROM alerts ORDER BY created_at DESC")
 
 if page == "Overview":
+    st.markdown("<div class='eyebrow'>SOC command center</div>", unsafe_allow_html=True)
     st.title("Security overview")
-    st.caption("A focused view of locally ingested security telemetry.")
+    st.caption("A focused view of locally ingested security telemetry. Your logs remain on this Mac.")
     a, b, c, d = st.columns(4)
     with a: metric_card("Events", len(events))
     with b: metric_card("Open alerts", len(alerts[alerts.status != "Resolved"]) if not alerts.empty else 0)
@@ -190,6 +213,7 @@ if page == "Overview":
         st.dataframe(alerts[["severity", "title", "tactic", "technique", "status"]].head(10), use_container_width=True, hide_index=True) if not alerts.empty else st.caption("Run detections to create analyst signals.")
 
 elif page == "Ingest logs":
+    st.markdown("<div class='eyebrow'>Telemetry pipeline</div>", unsafe_allow_html=True)
     st.title("Ingest logs")
     st.write("Upload authorized CSV, JSON/JSONL, or text/syslog data. Everything stays on this machine.")
     uploaded = st.file_uploader("Choose a log export", type=["csv", "json", "jsonl", "ndjson", "log", "txt"])
@@ -203,6 +227,7 @@ elif page == "Ingest logs":
         st.success(f"Created {run_detections()} new alerts.")
 
 elif page == "Alert queue":
+    st.markdown("<div class='eyebrow'>Detection workspace</div>", unsafe_allow_html=True)
     st.title("Alert queue")
     if alerts.empty:
         st.info("No alerts yet. Ingest logs and run the detection rules.")
@@ -217,6 +242,7 @@ elif page == "Alert queue":
             st.rerun()
 
 elif page == "Incidents":
+    st.markdown("<div class='eyebrow'>Case management</div>", unsafe_allow_html=True)
     st.title("Incidents")
     with st.form("incident"):
         title = st.text_input("Incident title")
@@ -230,6 +256,7 @@ elif page == "Incidents":
     if not incidents.empty: st.dataframe(incidents, use_container_width=True, hide_index=True)
 
 elif page == "MITRE coverage":
+    st.markdown("<div class='eyebrow'>Detection engineering</div>", unsafe_allow_html=True)
     st.title("MITRE ATT&CK coverage")
     if alerts.empty:
         st.info("Coverage appears after detection rules create alerts.")
@@ -239,6 +266,7 @@ elif page == "MITRE coverage":
         st.dataframe(coverage, use_container_width=True, hide_index=True)
 
 else:
+    st.markdown("<div class='eyebrow'>Analyst handoff</div>", unsafe_allow_html=True)
     st.title("Reports")
     st.write("Export the current analyst queue as CSV for a handoff or evidence package.")
     if alerts.empty:
