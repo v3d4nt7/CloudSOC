@@ -301,7 +301,14 @@ if page == "Overview":
             timeline = timeline.groupby("hour").size().reset_index(name="events")
             st.altair_chart(alt.Chart(timeline).mark_area(line=True).encode(x="hour:T", y="events:Q", tooltip=["hour", "events"]).properties(title="Activity timeline"), use_container_width=True)
         st.subheader("Latest analyst signals")
-        st.dataframe(alerts[["severity", "title", "tactic", "technique", "status"]].head(10), use_container_width=True, hide_index=True) if not alerts.empty else st.caption("Run detections to create analyst signals.")
+        if alerts.empty:
+            st.caption("Run detection rules to create analyst signals.")
+        else:
+            st.dataframe(
+                alerts[["severity", "title", "tactic", "technique", "status"]].head(10),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 elif page == "Ingest logs":
     st.markdown("<div class='eyebrow'>Telemetry pipeline</div>", unsafe_allow_html=True)
