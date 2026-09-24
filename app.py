@@ -58,6 +58,10 @@ def connection() -> sqlite3.Connection:
           id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, severity TEXT, status TEXT,
           owner TEXT, notes TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS incident_alerts (
+          incident_id INTEGER NOT NULL, alert_id INTEGER NOT NULL,
+          PRIMARY KEY (incident_id, alert_id)
+        );
         """
     )
     return con
@@ -145,6 +149,8 @@ def run_detections() -> int:
             detections.append(("Suspicious command execution", "High", "Execution", "T1059 Command and Scripting Interpreter"))
         if any(x in message for x in ["port scan", "nmap", "scan detected"]):
             detections.append(("Network reconnaissance", "Medium", "Reconnaissance", "T1595 Active Scanning"))
+        if any(x in message for x in ["../.env", "sql injection", "path traversal", "wp-login"]):
+            detections.append(("Suspicious web request", "High", "Initial Access", "T1190 Exploit Public-Facing Application"))
         if event.severity == "Critical":
             detections.append(("Critical security event", "Critical", "Impact", "T1486 Data Encrypted for Impact"))
         for title, severity, tactic, technique in detections:
@@ -170,6 +176,15 @@ def load_demo() -> None:
 
 def metric_card(label: str, value: int, delta: str | None = None) -> None:
     st.metric(label, value, delta=delta)
+
+
+def alert_context(alert_id: int) -> pd.DataFrame:
+    return query(
+        """SELECT a.id, a.title, a.severity, a.status, a.tactic, a.technique, a.evidence,
+                  e.timestamp, e.host, e.user, e.source_ip, e.event_type
+           FROM alerts a LEFT JOIN events e ON e.id = a.event_id WHERE a.id = ?""",
+        (alert_id,),
+    )
 
 
 with st.sidebar:
@@ -234,12 +249,39 @@ elif page == "Alert queue":
     else:
         selected = st.multiselect("Severity", sorted(alerts.severity.unique()), default=sorted(alerts.severity.unique()))
         display = alerts[alerts.severity.isin(selected)]
-        st.dataframe(display[["id", "severity", "title", "tactic", "technique", "status", "evidence"]], use_container_width=True, hide_index=True)
-        alert_id = st.selectbox("Update an alert", display.id.tolist(), format_func=lambda value: f"Alert #{value}")
-        status = st.selectbox("Status", ["New", "Investigating", "Resolved"])
-        if st.button("Save alert status"):
-            with connection() as con: con.execute("UPDATE alerts SET status=? WHERE id=?", (status, int(alert_id)))
-            st.rerun()
+        st.dataframe(display[["id", "severity", "title", "tactic", "technique", "status"]], use_container_width=True, hide_index=True)
+        alert_id = st.selectbox("Open an alert", display.id.tolist(), format_func=lambda value: f"Alert #{value} · {display.loc[display.id == value, 'title'].iloc[0]}")
+        detail = alert_context(int(alert_id)).iloc[0]
+        st.subheader("Investigation context")
+        left, right = st.columns([2, 1])
+        with left:
+            st.markdown(f"**{detail.title}**  ")
+            st.caption(f"{detail.tactic} · {detail.technique}")
+            st.code(detail.evidence or "No evidence captured.", language=None)
+        with right:
+            st.caption("Event metadata")
+            st.write(f"**Host**  {detail.host or 'Unknown'}")
+            st.write(f"**Source IP**  {detail.source_ip or 'Unknown'}")
+            st.write(f"**User**  {detail.user or 'Unknown'}")
+            st.write(f"**Observed**  {detail.timestamp or 'Unknown'}")
+        st.divider()
+        action, link = st.columns(2)
+        with action:
+            status = st.selectbox("Triage status", ["New", "Investigating", "Resolved"], index=["New", "Investigating", "Resolved"].index(detail.status))
+            if st.button("Save triage decision", type="primary"):
+                with connection() as con: con.execute("UPDATE alerts SET status=? WHERE id=?", (status, int(alert_id)))
+                st.success("Alert status updated.")
+                st.rerun()
+        with link:
+            incidents = query("SELECT id, title FROM incidents ORDER BY created_at DESC")
+            choices = {f"#{row.id} · {row.title}": int(row.id) for _, row in incidents.iterrows()}
+            if choices:
+                selected_incident = st.selectbox("Link to an existing incident", list(choices))
+                if st.button("Link alert to incident"):
+                    with connection() as con: con.execute("INSERT OR IGNORE INTO incident_alerts (incident_id, alert_id) VALUES (?, ?)", (choices[selected_incident], int(alert_id)))
+                    st.success("Alert linked to incident.")
+            else:
+                st.caption("Create an incident below, then return here to link this alert.")
 
 elif page == "Incidents":
     st.markdown("<div class='eyebrow'>Case management</div>", unsafe_allow_html=True)
@@ -253,7 +295,21 @@ elif page == "Incidents":
             with connection() as con: con.execute("INSERT INTO incidents (title,severity,status,owner,notes) VALUES (?,?,?,?,?)", (title, severity, "Open", owner, notes))
             st.rerun()
     incidents = query("SELECT * FROM incidents ORDER BY created_at DESC")
-    if not incidents.empty: st.dataframe(incidents, use_container_width=True, hide_index=True)
+    if not incidents.empty:
+        incident_view = query(
+            """SELECT i.*, COUNT(ia.alert_id) AS linked_alerts
+               FROM incidents i LEFT JOIN incident_alerts ia ON ia.incident_id = i.id
+               GROUP BY i.id ORDER BY i.created_at DESC"""
+        )
+        st.subheader("Active casework")
+        st.dataframe(incident_view[["id", "title", "severity", "status", "owner", "linked_alerts", "created_at"]], use_container_width=True, hide_index=True)
+        incident_id = st.selectbox("Review an incident", incident_view.id.tolist(), format_func=lambda value: f"Incident #{value} · {incident_view.loc[incident_view.id == value, 'title'].iloc[0]}")
+        linked = query(
+            """SELECT a.id, a.severity, a.title, a.status, a.tactic FROM incident_alerts ia
+               JOIN alerts a ON a.id = ia.alert_id WHERE ia.incident_id = ?""", (int(incident_id),)
+        )
+        st.caption("Linked signals")
+        st.dataframe(linked if not linked.empty else pd.DataFrame({"status": ["No alerts linked yet."]}), use_container_width=True, hide_index=True)
 
 elif page == "MITRE coverage":
     st.markdown("<div class='eyebrow'>Detection engineering</div>", unsafe_allow_html=True)
