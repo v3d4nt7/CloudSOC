@@ -225,6 +225,44 @@ def alert_context(alert_id: int) -> pd.DataFrame:
     )
 
 
+def incident_report(incident_id: int) -> str:
+    incident = query("SELECT * FROM incidents WHERE id = ?", (incident_id,)).iloc[0]
+    linked = query(
+        """SELECT a.id, a.title, a.severity, a.status, a.tactic, a.technique, a.evidence
+           FROM incident_alerts ia JOIN alerts a ON a.id = ia.alert_id
+           WHERE ia.incident_id = ? ORDER BY a.created_at DESC""",
+        (incident_id,),
+    )
+    lines = [
+        f"# Incident #{incident.id}: {incident.title}",
+        "",
+        "## Case summary",
+        f"- **Severity:** {incident.severity}",
+        f"- **Status:** {incident.status}",
+        f"- **Owner:** {incident.owner or 'Unassigned'}",
+        f"- **Created:** {incident.created_at}",
+        "",
+        "## Analyst notes",
+        incident.notes or "No analyst notes recorded.",
+        "",
+        "## Linked signals",
+    ]
+    if linked.empty:
+        lines.append("No alerts have been linked to this incident.")
+    else:
+        for _, alert in linked.iterrows():
+            lines.extend([
+                f"### Alert #{alert.id}: {alert.title}",
+                f"- **Severity:** {alert.severity}",
+                f"- **Status:** {alert.status}",
+                f"- **MITRE:** {alert.tactic} — {alert.technique}",
+                f"- **Evidence:** {alert.evidence}",
+                "",
+            ])
+    lines.extend(["## Handoff checklist", "- Confirm scope and affected systems.", "- Preserve relevant log evidence.", "- Record containment and recovery decisions."])
+    return "\n".join(lines)
+
+
 with st.sidebar:
     st.title("🛡️ SentinelDeck")
     st.caption("Local-first SOC analyst workspace")
@@ -367,3 +405,18 @@ else:
         st.info("No alerts to export.")
     else:
         st.download_button("Download alert report", alerts.to_csv(index=False).encode(), "sentineldeck-alert-report.csv", "text/csv", type="primary")
+    incidents = query("SELECT id, title FROM incidents ORDER BY created_at DESC")
+    if not incidents.empty:
+        st.divider()
+        st.subheader("Incident handoff")
+        choices = {f"Incident #{row.id} · {row.title}": int(row.id) for _, row in incidents.iterrows()}
+        selected_incident = st.selectbox("Select a case", list(choices), key="report_incident")
+        report = incident_report(choices[selected_incident])
+        st.download_button(
+            "Download incident handoff (.md)",
+            report.encode(),
+            f"sentineldeck-incident-{choices[selected_incident]}-handoff.md",
+            "text/markdown",
+        )
+        with st.expander("Preview handoff report"):
+            st.markdown(report)
