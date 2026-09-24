@@ -1,0 +1,10 @@
+timestamp,host,user,source_ip,severity,event_type,message
+2026-09-24T08:00:00Z,macbook-sales,unknown,203.0.113.45,High,ssh,Failed password for admin from 203.0.113.45
+2026-09-24T08:02:00Z,macbook-sales,unknown,203.0.113.45,High,ssh,Failed password for admin from 203.0.113.45
+2026-09-24T08:04:00Z,macbook-sales,unknown,203.0.113.45,High,ssh,Failed password for admin from 203.0.113.45
+2026-09-24T08:06:00Z,macbook-sales,unknown,203.0.113.45,High,ssh,Failed password for admin from 203.0.113.45
+2026-09-24T08:08:00Z,macbook-sales,unknown,203.0.113.45,High,ssh,Failed password for admin from 203.0.113.45
+2026-09-24T08:10:00Z,macbook-sales,admin,203.0.113.45,High,ssh,Accepted publickey for admin from 203.0.113.45
+2026-09-24T08:12:00Z,api-prod,deploy,198.51.100.20,High,web,Suspicious request: /../.env
+2026-09-24T08:14:00Z,edge-fw,,192.0.2.99,Medium,network,Nmap port scan detected
+2026-09-24T08:16:00Z,fileserver,finance,10.10.1.5,Critical,endpoint,Critical ransomware behavior detected

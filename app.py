@@ -1,4 +1,4 @@
-"""SentinelDeck: a local-first SOC dashboard built from scratch for macOS."""
+"""CloudSOC: a local-first SOC dashboard built from scratch for macOS."""
 from __future__ import annotations
 
 import json
@@ -14,26 +14,26 @@ import pandas as pd
 import streamlit as st
 
 APP_DIR = Path(__file__).parent
-DB_PATH = APP_DIR / "sentineldeck.db"
+DB_PATH = APP_DIR / "cloudsoc.db"
 
-st.set_page_config(page_title="SentinelDeck", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="CloudSOC", layout="wide")
 
 st.markdown(
     """
     <style>
-    .stApp { background: #08111d; color: #e9f2ff; }
-    [data-testid="stSidebar"] { background: linear-gradient(180deg, #0d1d30 0%, #08111d 100%); border-right: 1px solid #1f3852; }
-    [data-testid="stSidebar"] * { color: #dce9f8; }
-    h1, h2, h3 { color: #f3f8ff !important; letter-spacing: -0.03em; }
-    [data-testid="stMetric"] { background: #0e1b2b; border: 1px solid #203a55; border-radius: 14px; padding: 16px; }
-    [data-testid="stMetricLabel"] { color: #98b1ca; }
-    [data-testid="stMetricValue"] { color: #eaf7ff; }
-    .stButton > button { border-radius: 9px; border: 1px solid #2d567b; background: #123b5c; color: #eff9ff; }
-    .stButton > button:hover { border-color: #4ad2ff; color: #ffffff; background: #155278; }
-    [data-testid="stDataFrame"] { border: 1px solid #203a55; border-radius: 10px; overflow: hidden; }
-    div[data-baseweb="select"] > div, .stTextInput input, .stTextArea textarea { background: #0e1b2b !important; color: #eef7ff !important; border-color: #294865 !important; }
-    .eyebrow { color: #4ad2ff; font-weight: 700; font-size: 0.76rem; letter-spacing: 0.12em; text-transform: uppercase; }
-    .status-live { color: #78efb0; font-weight: 700; font-size: 0.8rem; }
+    .stApp { background: #090a1a; color: #f7f7ff; }
+    [data-testid="stSidebar"] { background: linear-gradient(180deg, #12132e 0%, #0a0b1e 100%); border-right: 1px solid #2c2d59; }
+    [data-testid="stSidebar"] * { color: #ececff; }
+    h1, h2, h3 { color: #ffffff !important; letter-spacing: -0.035em; }
+    [data-testid="stMetric"] { background: linear-gradient(145deg, #17193a, #10112a); border: 1px solid #34366f; border-radius: 12px; padding: 17px; box-shadow: 0 10px 24px rgba(0, 0, 0, .18); }
+    [data-testid="stMetricLabel"] { color: #b6b7d8; font-weight: 600; }
+    [data-testid="stMetricValue"] { color: #ffffff; }
+    .stButton > button { border-radius: 8px; border: 1px solid #706bff; background: #5147d9; color: #ffffff; font-weight: 650; }
+    .stButton > button:hover { border-color: #a6a2ff; color: #ffffff; background: #665cf0; }
+    [data-testid="stDataFrame"] { border: 1px solid #34366f; border-radius: 10px; overflow: hidden; }
+    div[data-baseweb="select"] > div, .stTextInput input, .stTextArea textarea { background: #17193a !important; color: #ffffff !important; border-color: #45478a !important; }
+    .eyebrow { color: #62e5c9; font-weight: 750; font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; }
+    .status-live { color: #62e5c9; font-weight: 750; font-size: 0.78rem; letter-spacing: .04em; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -264,7 +264,7 @@ def incident_report(incident_id: int) -> str:
 
 
 with st.sidebar:
-    st.title("🛡️ SentinelDeck")
+    st.title("CloudSOC")
     st.caption("Local-first SOC analyst workspace")
     st.markdown("<span class='status-live'>● LOCAL SENSOR ONLINE</span>", unsafe_allow_html=True)
     page = st.radio("Workspace", ["Overview", "Ingest logs", "Alert queue", "Incidents", "MITRE coverage", "Reports"])
@@ -404,7 +404,7 @@ else:
     if alerts.empty:
         st.info("No alerts to export.")
     else:
-        st.download_button("Download alert report", alerts.to_csv(index=False).encode(), "sentineldeck-alert-report.csv", "text/csv", type="primary")
+        st.download_button("Download alert report", alerts.to_csv(index=False).encode(), "cloudsoc-alert-report.csv", "text/csv", type="primary")
     incidents = query("SELECT id, title FROM incidents ORDER BY created_at DESC")
     if not incidents.empty:
         st.divider()
@@ -415,7 +415,7 @@ else:
         st.download_button(
             "Download incident handoff (.md)",
             report.encode(),
-            f"sentineldeck-incident-{choices[selected_incident]}-handoff.md",
+            f"cloudsoc-incident-{choices[selected_incident]}-handoff.md",
             "text/markdown",
         )
         with st.expander("Preview handoff report"):
