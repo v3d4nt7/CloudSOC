@@ -21,6 +21,14 @@ Open `http://localhost:8501`, load the sample dataset, and explore the dashboard
 
 The project intentionally does not parse native Windows `.evtx` files. Export Windows events to JSON, CSV, or XML/text first, then upload them.
 
+## Native macOS collection
+
+The **Collect Mac logs** page can read recent macOS Unified Logs on demand. It does not run as a background agent and does not transmit logs. The analyst selects a short lookback window, explicitly starts collection, and CloudSOC retains up to 1,000 locally relevant lines before they are evaluated by the detection rules.
+
+## Time-window correlation
+
+The brute-force rule is evaluated within a 10-minute time window. It raises an alert when at least five failed authentication events from one source IP occur during that window. A successful login from the same source after that pattern produces a separate potential-account-compromise alert.
+
 ## Try it with sample data
 
 Upload `sample_data/cloudsoc-demo-security-events.csv`, then choose **Run detection rules**. It produces authentication-failure, brute-force, successful-login-after-failures, suspicious-web-request, port-scan, and critical-event alerts.

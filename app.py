@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
@@ -15,6 +17,8 @@ import streamlit as st
 
 APP_DIR = Path(__file__).parent
 DB_PATH = APP_DIR / "cloudsoc.db"
+BRUTE_FORCE_THRESHOLD = 5
+CORRELATION_WINDOW_MINUTES = 10
 
 st.set_page_config(page_title="CloudSOC", layout="wide")
 
@@ -124,6 +128,31 @@ def parse_upload(uploaded: Any) -> pd.DataFrame:
     return normalise(pd.DataFrame(rows))
 
 
+def collect_macos_security_logs(minutes: int) -> pd.DataFrame:
+    """Read recent Unified Logs only when an analyst explicitly requests it."""
+    if sys.platform != "darwin":
+        raise RuntimeError("The native collector is available only on macOS.")
+    try:
+        result = subprocess.run(
+            ["/usr/bin/log", "show", "--style", "syslog", "--last", f"{minutes}m"],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("macOS log collection timed out. Try a shorter time range.") from error
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "macOS did not return Unified Logs.")
+
+    security_terms = ("authentication", "failed", "denied", "unauthorized", "ssh", "sudo", "malware")
+    lines = [line for line in result.stdout.splitlines() if any(term in line.lower() for term in security_terms)]
+    if not lines:
+        return pd.DataFrame()
+    rows = [{"timestamp": "", "host": "this-mac", "event_type": "macos_unified", "message": line} for line in lines[-1000:]]
+    return normalise(pd.DataFrame(rows))
+
+
 def ingest(events: pd.DataFrame) -> int:
     columns = ["timestamp", "host", "user", "source_ip", "severity", "event_type", "message", "raw"]
     with connection() as con:
@@ -172,28 +201,35 @@ def run_detections() -> int:
     messages = events.message.fillna("").astype(str).str.lower()
     failed = events[messages.str.contains("failed") & messages.str.contains("login|password|logon|ssh", regex=True)].copy()
     if not failed.empty:
+        failed["parsed_time"] = pd.to_datetime(failed["timestamp"], utc=True, errors="coerce")
+        failed = failed.dropna(subset=["parsed_time"])
         for source_ip, group in failed[failed.source_ip.fillna("") != ""].groupby("source_ip"):
-            if len(group) >= 5:
-                latest = group.iloc[-1]
+            group = group.sort_values("parsed_time")
+            latest = group.iloc[-1]
+            window_start = latest.parsed_time - pd.Timedelta(minutes=CORRELATION_WINDOW_MINUTES)
+            window_events = group[group.parsed_time >= window_start]
+            if len(window_events) >= BRUTE_FORCE_THRESHOLD:
                 save_detection(
                     int(latest.id),
                     "Brute-force pattern detected",
                     "Critical",
                     "Credential Access",
                     "T1110 Brute Force",
-                    f"{len(group)} failed authentication events from {source_ip}. Latest: {latest.message}",
+                    f"{len(window_events)} failed authentication events from {source_ip} within {CORRELATION_WINDOW_MINUTES} minutes. Latest: {latest.message}",
                 )
         successful = events[messages.str.contains("accepted|successful login|login succeeded", regex=True)]
         for _, event in successful.iterrows():
-            if event.source_ip and not failed[failed.source_ip == event.source_ip].empty:
-                attempts = len(failed[failed.source_ip == event.source_ip])
+            source_ip = str(event.source_ip) if pd.notna(event.source_ip) else ""
+            event_time = pd.to_datetime(event.timestamp, utc=True, errors="coerce")
+            recent_failures = failed[(failed.source_ip == source_ip) & (failed.parsed_time <= event_time) & (failed.parsed_time >= event_time - pd.Timedelta(minutes=CORRELATION_WINDOW_MINUTES))]
+            if source_ip and len(recent_failures) >= BRUTE_FORCE_THRESHOLD:
                 save_detection(
                     int(event.id),
                     "Successful login after failed attempts",
                     "Critical",
                     "Initial Access",
                     "T1078 Valid Accounts",
-                    f"A login succeeded from {event.source_ip} after {attempts} failed authentication events.",
+                    f"A login succeeded from {source_ip} after {len(recent_failures)} failed authentication events within {CORRELATION_WINDOW_MINUTES} minutes.",
                 )
     return created
 
@@ -202,7 +238,7 @@ def load_demo() -> None:
     now = datetime.now(timezone.utc)
     demo = []
     for i in range(6):
-        demo.append({"timestamp": (now - timedelta(minutes=i * 3)).isoformat(), "host": "macbook-sales", "user": "unknown", "source_ip": "203.0.113.45", "event_type": "ssh", "message": "Failed password for admin from 203.0.113.45", "severity": "High"})
+        demo.append({"timestamp": (now - timedelta(minutes=i * 2)).isoformat(), "host": "macbook-sales", "user": "unknown", "source_ip": "203.0.113.45", "event_type": "ssh", "message": "Failed password for admin from 203.0.113.45", "severity": "High"})
     demo += [
         {"timestamp": now.isoformat(), "host": "macbook-sales", "user": "admin", "source_ip": "203.0.113.45", "event_type": "ssh", "message": "Accepted publickey for admin from 203.0.113.45", "severity": "High"},
         {"timestamp": now.isoformat(), "host": "api-prod", "user": "deploy", "source_ip": "198.51.100.20", "event_type": "web", "message": "Suspicious request: /../.env", "severity": "High"},
@@ -266,8 +302,8 @@ def incident_report(incident_id: int) -> str:
 with st.sidebar:
     st.title("CloudSOC")
     st.caption("Local-first SOC analyst workspace")
-    st.markdown("<span class='status-live'>● LOCAL SENSOR ONLINE</span>", unsafe_allow_html=True)
-    page = st.radio("Workspace", ["Overview", "Ingest logs", "Alert queue", "Incidents", "MITRE coverage", "Reports"])
+    st.markdown("<span class='status-live'>● LOCAL WORKSPACE READY</span>", unsafe_allow_html=True)
+    page = st.radio("Workspace", ["Overview", "Ingest logs", "Collect Mac logs", "Alert queue", "Incidents", "MITRE coverage", "Reports"])
     st.divider()
     if st.button("Load safe demo activity", use_container_width=True):
         load_demo()
@@ -323,6 +359,25 @@ elif page == "Ingest logs":
     st.divider()
     if st.button("Run detection rules", type="primary"):
         st.success(f"Created {run_detections()} new alerts.")
+
+elif page == "Collect Mac logs":
+    st.markdown("<div class='eyebrow'>Optional local collection</div>", unsafe_allow_html=True)
+    st.title("Collect macOS security logs")
+    st.write("This reads recent Unified Logs from this Mac only after you click collect. It does not run in the background or send logs anywhere.")
+    minutes = st.select_slider("Lookback window", options=[5, 10, 15, 30, 60], value=15, format_func=lambda value: f"Last {value} minutes")
+    st.caption("CloudSOC keeps security-relevant lines containing authentication, failed, denied, unauthorized, SSH, sudo, or malware indicators. Up to 1,000 matching lines are saved locally.")
+    if st.button("Collect local security logs", type="primary"):
+        try:
+            collected = collect_macos_security_logs(minutes)
+            if collected.empty:
+                st.info("No matching security-relevant log lines were found in this time window.")
+            else:
+                st.success(f"Collected and ingested {ingest(collected)} local log events.")
+                st.dataframe(collected.drop(columns=["raw"]).head(30), use_container_width=True, hide_index=True)
+        except RuntimeError as error:
+            st.error(str(error))
+    st.divider()
+    st.caption("After collection, go to Ingest logs and run detection rules to evaluate the new events.")
 
 elif page == "Alert queue":
     st.markdown("<div class='eyebrow'>Detection workspace</div>", unsafe_allow_html=True)
