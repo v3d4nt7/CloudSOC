@@ -140,6 +140,19 @@ def run_detections() -> int:
         return 0
     created = 0
     seen = set(query("SELECT event_id, title FROM alerts").apply(lambda r: (r.event_id, r.title), axis=1).tolist())
+
+    def save_detection(event_id: int, title: str, severity: str, tactic: str, technique: str, evidence: str) -> None:
+        nonlocal created
+        if (event_id, title) in seen:
+            return
+        with connection() as con:
+            con.execute(
+                "INSERT INTO alerts (event_id,title,severity,tactic,technique,evidence) VALUES (?,?,?,?,?,?)",
+                (event_id, title, severity, tactic, technique, evidence),
+            )
+        seen.add((event_id, title))
+        created += 1
+
     for _, event in events.iterrows():
         message = str(event.message).lower()
         detections: list[tuple[str, str, str, str]] = []
@@ -154,10 +167,34 @@ def run_detections() -> int:
         if event.severity == "Critical":
             detections.append(("Critical security event", "Critical", "Impact", "T1486 Data Encrypted for Impact"))
         for title, severity, tactic, technique in detections:
-            if (event.id, title) not in seen:
-                with connection() as con:
-                    con.execute("INSERT INTO alerts (event_id,title,severity,tactic,technique,evidence) VALUES (?,?,?,?,?,?)", (event.id, title, severity, tactic, technique, event.message))
-                created += 1
+            save_detection(event.id, title, severity, tactic, technique, event.message)
+
+    messages = events.message.fillna("").astype(str).str.lower()
+    failed = events[messages.str.contains("failed") & messages.str.contains("login|password|logon|ssh", regex=True)].copy()
+    if not failed.empty:
+        for source_ip, group in failed[failed.source_ip.fillna("") != ""].groupby("source_ip"):
+            if len(group) >= 5:
+                latest = group.iloc[-1]
+                save_detection(
+                    int(latest.id),
+                    "Brute-force pattern detected",
+                    "Critical",
+                    "Credential Access",
+                    "T1110 Brute Force",
+                    f"{len(group)} failed authentication events from {source_ip}. Latest: {latest.message}",
+                )
+        successful = events[messages.str.contains("accepted|successful login|login succeeded", regex=True)]
+        for _, event in successful.iterrows():
+            if event.source_ip and not failed[failed.source_ip == event.source_ip].empty:
+                attempts = len(failed[failed.source_ip == event.source_ip])
+                save_detection(
+                    int(event.id),
+                    "Successful login after failed attempts",
+                    "Critical",
+                    "Initial Access",
+                    "T1078 Valid Accounts",
+                    f"A login succeeded from {event.source_ip} after {attempts} failed authentication events.",
+                )
     return created
 
 
@@ -167,6 +204,7 @@ def load_demo() -> None:
     for i in range(6):
         demo.append({"timestamp": (now - timedelta(minutes=i * 3)).isoformat(), "host": "macbook-sales", "user": "unknown", "source_ip": "203.0.113.45", "event_type": "ssh", "message": "Failed password for admin from 203.0.113.45", "severity": "High"})
     demo += [
+        {"timestamp": now.isoformat(), "host": "macbook-sales", "user": "admin", "source_ip": "203.0.113.45", "event_type": "ssh", "message": "Accepted publickey for admin from 203.0.113.45", "severity": "High"},
         {"timestamp": now.isoformat(), "host": "api-prod", "user": "deploy", "source_ip": "198.51.100.20", "event_type": "web", "message": "Suspicious request: /../.env", "severity": "High"},
         {"timestamp": now.isoformat(), "host": "edge-fw", "user": "", "source_ip": "192.0.2.99", "event_type": "network", "message": "Nmap port scan detected", "severity": "Medium"},
         {"timestamp": now.isoformat(), "host": "fileserver", "user": "finance", "source_ip": "10.10.1.5", "event_type": "endpoint", "message": "Critical ransomware behavior detected", "severity": "Critical"},
